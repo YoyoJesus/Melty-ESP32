@@ -74,6 +74,8 @@ The ESP32 GPIO pins are not 5 V tolerant and must not receive more than 3.3 V. F
 
 ## 5. Wiring and Power
 
+See the [wiring diagram](wiring-diagram.svg).
+
 ### Warning: Power Conflicts
 Do not connect USB and the ESC's BEC at the same time unless the board's USB power path has been checked and verified to prevent back-feeding. When connecting USB for console configuration, disconnect the BEC 5 V line to the ESP32 5 V pin, or power the ESP32 solely via USB with the battery disconnected.
 
