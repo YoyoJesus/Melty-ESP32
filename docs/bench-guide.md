@@ -36,7 +36,7 @@ Send written questions to the event organizers for clarification before finalizi
 Configure the FS-i6 transmitter as follows:
 1. Output mode: In `System Setup` -> `RX Setup`, set output format to `iBUS` (or `Serial`, depending on firmware version).
 2. Aux Channels: In `Functions Setup` -> `Aux. channels`, set `Channel 5` source to `SwA`.
-3. Failsafe setup: In `Functions Setup` -> `Failsafe`:
+3. Failsafe setup: In `System Setup` -> `RX Setup` -> `Failsafe`. Menu names can vary by transmitter firmware:
    - Set `Channel 3` (spin throttle) to minimum (-100%, pulse width ~1000 us).
    - Set `Channel 5` (arm switch) to disarmed (-100%, pulse width ~1000 us).
    - Turn failsafe `On` for both channels and hold `Cancel` to save.
@@ -63,13 +63,14 @@ If SwA was already armed at power-on, or if any failsafe tripped, flipping SwA d
 The ESP32 GPIO pins are not 5 V tolerant and must not receive more than 3.3 V. FS-iA6B receiver iBUS signal voltage varies between hardware revisions.
 
 1. Power the receiver from a 5 V supply (or receiver battery) with signal disconnected from the ESP32.
-2. Using an oscilloscope or multimeter, measure the DC and peak signal voltage on the receiver iBUS pin relative to ground.
-3. If measured signal voltage is above 3.3 V:
+2. Using an oscilloscope, measure the peak signal voltage on the receiver iBUS pin relative to ground. A multimeter shows an average, not the peak, so it cannot clear this check. Without a scope, use the divider.
+3. If measured peak voltage is above 3.3 V, or was not measured with a scope:
    - Build a resistor voltage divider between receiver iBUS out and ESP32 GPIO16:
      - 1.0 kOhm resistor between receiver iBUS pin and ESP32 GPIO16.
      - 2.0 kOhm resistor between ESP32 GPIO16 and ground.
    - This scales a 5 V signal down to approximately 3.3 V.
-4. If measured signal voltage is 3.3 V or lower, the receiver pin may connect directly to GPIO16.
+4. If the scope shows 3.3 V or lower, the receiver pin may connect directly to GPIO16.
+5. After wiring, confirm channels read cleanly at 115200 baud, using Step 1 of section 7.
 
 ## 5. Wiring and Power
 
@@ -96,7 +97,7 @@ Leave the Repeat Robotics dual ESC mixing jumper uncut. Mixing must remain disab
 
 ## 6. Motor Winding Resistance and Stall Protection
 
-The Repeat Robotics dual brushed ESC is rated for 2 A continuous and 4 A burst per channel. Gecko motors can draw high stall currents that exceed ESC ratings if jammed.
+The Repeat Robotics dual brushed ESC is listed at 2 A continuous and 4 A burst. The listing does not say whether that is per channel or total, so treat it as per channel at most. Gecko motors can draw high stall currents that exceed ESC ratings if jammed.
 
 1. Disconnect motor leads from the ESC.
 2. Using a multimeter, measure winding resistance (R) across the motor terminals. Subtract probe lead resistance.
@@ -143,10 +144,10 @@ All steps must be conducted with the robot elevated on test blocks and wheels co
 1. Mount MPU-6050 approximately 10 mm from the chassis spin center.
 2. Measure physical distance from the center of rotation to the accelerometer chip package in meters.
 3. Power the ESP32 and open serial monitor. Confirm `sensor=ok` appears in the status stream.
-4. Rotate the robot slowly by hand in the intended spin direction while observing `radial`:
-   - If `radial` remains near zero, switch axis: `set radialAxis 1` followed by `save`.
-   - If `radial` increases with a negative sign during spin, set `radialSign -1` followed by `save`.
-   - Confirm hand spin produces a positive `radial` value.
+4. Hold the robot on edge, with the sensor directly below the spin center, so the direction from sensor to center points straight up. `radial` should read close to +1.0:
+   - If `radial` is near zero, switch axis: `set radialAxis 1` followed by `save`, then check again.
+   - If `radial` is close to -1.0, set `radialSign -1` followed by `save`.
+   - Spinning by hand is too slow to give a clear reading at this radius, so use this tilt check instead.
 5. Invert the robot by hand:
    - Status output should display `flipped=1` when upside down and `flipped=0` when upright.
    - If inverted state is opposite, toggle `zSign -1` followed by `save`.
@@ -181,17 +182,19 @@ Conduct this exact 7-step test on test blocks before any free-running operation:
 7. Power cycle with the ESC connected several times: motors must not twitch at any point.
 
 ### Step 5: Jam Protection Test
-1. With wheels on blocks and `stallCap` configured, arm the robot.
-2. Apply a light spin command (above `minRpm` threshold).
-3. Safely simulate a wheel stall by gently applying friction to slow the wheel below `minRpm` (for example, holding with a wooden stick or gloved hand, avoiding pinch points).
-4. Verify motor power cuts back to `stallCap` after 1.0 second of stalled condition.
-5. Release friction and verify spin accelerates back to commanded speed once RPM exceeds `minRpm`.
+Never touch or hold a running wheel. The chassis does not rotate on blocks, so measured RPM stays near 0 and the firmware sees a jam by itself. That makes this test possible with free wheels.
+
+1. With wheels on blocks, clear of everything, and `stallCap` configured, arm the robot.
+2. Raise CH3 above the `stallCap` level, then hold it for at least 3 seconds.
+3. Disarm, connect USB, and run `log`. Verify `aUs` and `bUs` level off at the `stallCap` output about 1 second after power passes the cap. For example, a cap of 0.3 gives 1650 us, or 1350 us on a reversed motor.
+4. Expect this limit in all testing on blocks, since RPM stays below `minRpm`.
 
 ### Step 6: Spin-Up Verification
 1. Conduct inside a fully enclosed test arena or containment box.
 2. With robot on the floor inside the enclosure, arm and gradually raise CH3 throttle.
 3. Verify smooth acceleration without sudden jerks or ESC thermal shutdown.
 4. Check LED flashing behavior once robot exceeds `minRpm`.
+5. If the robot stalls at low speed and never reaches `minRpm`, the stall cap is holding it down. Lower `minRpm` with `set minRpm <rpm>` and `save` before raising `stallCap`, and do not raise `stallCap` above the section 6 value.
 
 ### Step 7: Flipped Driving Test
 1. Place robot inverted inside the test arena.
