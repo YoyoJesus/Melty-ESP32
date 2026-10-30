@@ -1,0 +1,229 @@
+# Bench and Bring-Up Guide
+
+## 1. Parts Still Needed
+
+Before beginning assembly and bench testing, acquire the following items:
+- External heading LED: High-brightness LED with a current-limiting resistor or driver transistor sized for ESP32 GPIO27 (keep pin current within ESP32 limits, 12 mA recommended, 20 mA maximum).
+- Power disconnect: Removable link or screw switch rated for 3S battery voltage and full motor current, installed in the battery positive lead. Must allow full power cutoff in under 15 seconds without disassembly or placing hands near rotating parts.
+- Test blocks: Stable stand or blocks to support the chassis with wheels and rotating parts completely elevated and clear of any surface during pit and bench testing.
+
+## 2. Inquiries and Event Rules
+
+Event: KSU Combat Robotics 1lb Antweight (Ruleset v6.1 / KSU-TR-1LB-NF Rev 6.0).
+
+### Organizer Inquiries in Writing
+
+Send written questions to the event organizers for clarification before finalizing the build:
+1. Hazard Bot pre-approval: KSU rules require written pre-approval when rotating weapon mass exceeds 50% of total robot weight, including shaft, bearing, and containment documentation. Because a melty-brain robot spins its entire body, clarify whether the entire robot is classified as a Hazard Bot.
+2. Weapon lock requirement: Rules require a physical weapon lock (pin or clamp) on spinners at all times outside the arena cage. Melty robots have no separate weapon blade. Ask organizers what physical restraint (such as a transport clamp, chassis strap, or switch lock) is acceptable.
+
+### Event Rules Compliance
+
+| Rule | Requirement | Implementation and Status |
+| --- | --- | --- |
+| Weight | 1.00 lb (453.6 g) maximum for rolling robots | Chassis and components must stay under 453.6 g. Motor pair is approximately 110 g. Weigh full robot on a calibrated scale before competition. |
+| Voltage | 3S LiPo allowed, 13.05 V ceiling | 3S pack voltage must not exceed 13.05 V. |
+| Battery | Factory sealed, rigidly mounted, not swollen | Inspect pack condition. Mount rigidly inside chassis. |
+| Radio | 2.4 GHz digital spread spectrum | Provided by FlySky FS-i6 transmitter and FS-iA6B receiver using AFHDS 2A. |
+| Failsafe | Outputs cut to zero within 2.0 s of signal loss or radio off | Implemented across transmitter failsafe, firmware timeout (100 ms), and ESC signal loss cutoff. Must pass the 7-step failsafe test. |
+| Disconnect | Screw switch or removable link cuts all power in under 15 s | Must be installed in positive battery lead, accessible without tool disassembly or reaching near spinning perimeter. |
+| Spin-down | Dead stop within 60 s after power cutoff or failsafe | Measure on test bench and in arena. ESC center-braking at neutral assists deceleration. |
+| Test stands | Powered outside arena only on blocks with wheels and weapons clear | All bench testing and pit operations must use test blocks. |
+| KO | No translation within a 10 second count is a KO | Robot must achieve controlled translation to avoid a knockout. Tested during bring-up. |
+
+## 3. FlySky FS-i6 Transmitter Setup
+
+Configure the FS-i6 transmitter as follows:
+1. Output mode: In `System Setup` -> `RX Setup`, set output format to `iBUS` (or `Serial`, depending on firmware version).
+2. Aux Channels: In `Functions Setup` -> `Aux. channels`, set `Channel 5` source to `SwA`.
+3. Failsafe setup: In `Functions Setup` -> `Failsafe`:
+   - Set `Channel 3` (spin throttle) to minimum (-100%, pulse width ~1000 us).
+   - Set `Channel 5` (arm switch) to disarmed (-100%, pulse width ~1000 us).
+   - Turn failsafe `On` for both channels and hold `Cancel` to save.
+
+Channel layout and controls (Mode 2):
+- CH1: Right stick horizontal (Translation X; hold full left to satisfy arming gesture).
+- CH2: Right stick vertical (Translation Y).
+- CH3: Left stick vertical (Spin throttle; hold full down to satisfy arming gesture).
+- CH4: Left stick horizontal (Heading trim rate).
+- CH5: Switch SwA (Disarmed = low/down; Armed = high/up).
+
+### Arming Sequence
+
+The microcontroller board is a confirmed classic ESP32 (ESP32-D0WDQ6-V3). Arming requires:
+1. Left stick held full down (CH3 <= 1050 us).
+2. Right stick held full left (CH1 <= 1050 us).
+3. Flip switch SwA from disarmed to armed (CH5 transitions from <= 1700 us to > 1700 us).
+4. Sensor startup check must have passed at boot.
+
+If SwA was already armed at power-on, or if any failsafe tripped, flipping SwA directly will not re-arm. Move SwA back to disarmed, satisfy both stick positions, and flip SwA to armed again.
+
+## 4. iBUS Voltage Check and Voltage Divider
+
+The ESP32 GPIO pins are not 5 V tolerant and must not receive more than 3.3 V. FS-iA6B receiver iBUS signal voltage varies between hardware revisions.
+
+1. Power the receiver from a 5 V supply (or receiver battery) with signal disconnected from the ESP32.
+2. Using an oscilloscope or multimeter, measure the DC and peak signal voltage on the receiver iBUS pin relative to ground.
+3. If measured signal voltage is above 3.3 V:
+   - Build a resistor voltage divider between receiver iBUS out and ESP32 GPIO16:
+     - 1.0 kOhm resistor between receiver iBUS pin and ESP32 GPIO16.
+     - 2.0 kOhm resistor between ESP32 GPIO16 and ground.
+   - This scales a 5 V signal down to approximately 3.3 V.
+4. If measured signal voltage is 3.3 V or lower, the receiver pin may connect directly to GPIO16.
+
+## 5. Wiring and Power
+
+### Warning: Power Conflicts
+Do not connect USB and the ESC's BEC at the same time unless the board's USB power path has been checked and verified to prevent back-feeding. When connecting USB for console configuration, disconnect the BEC 5 V line to the ESP32 5 V pin, or power the ESP32 solely via USB with the battery disconnected.
+
+### ESC Mixing Jumper
+Leave the Repeat Robotics dual ESC mixing jumper uncut. Mixing must remain disabled so each signal pin directly controls one individual motor.
+
+### Wiring Connections
+
+| Signal | ESP32 Pin | Destination | Notes |
+| --- | --- | --- | --- |
+| iBUS in | GPIO16 (UART2 RX) | Receiver iBUS pin | Pass through 1k/2k voltage divider if receiver output exceeds 3.3 V. |
+| ESC Motor A | GPIO25 | Repeat ESC input A | 3-pin connector. Carries BEC 5 V, ground, and signal A. |
+| ESC Motor B | GPIO26 | Repeat ESC input B | 1-pin connector (signal B). |
+| Sensor SDA | GPIO21 | GY-521 MPU-6050 SDA | I2C data (400 kHz). |
+| Sensor SCL | GPIO22 | GY-521 MPU-6050 SCL | I2C clock (400 kHz). |
+| Heading LED | GPIO27 | LED anode / driver | Current-limited by series resistor. |
+| +5 V Power | ESP32 5V pin | ESC BEC 5V, GY-521 VCC, and Receiver VCC | Powered by ESC 5V 1.5A BEC. |
+| Ground | ESP32 GND | Common ground | ESC GND, Receiver GND, GY-521 GND, and LED cathode must share common ground. |
+| Main Battery | Battery (+) via disconnect | ESC Battery (+) | 3S LiPo through removable link or screw switch. |
+| Main Battery | Battery (-) | ESC Battery (-) | Negative battery lead directly to ESC. |
+
+## 6. Motor Winding Resistance and Stall Protection
+
+The Repeat Robotics dual brushed ESC is rated for 2 A continuous and 4 A burst per channel. Gecko motors can draw high stall currents that exceed ESC ratings if jammed.
+
+1. Disconnect motor leads from the ESC.
+2. Using a multimeter, measure winding resistance (R) across the motor terminals. Subtract probe lead resistance.
+3. Calculate maximum stall current at nominal 12 V:
+   `stall_amps = 12.0 / R`
+4. Calculate the stall power cap:
+   `cap = 4.0 / stall_amps`
+5. Connect to the ESP32 serial console (115200 baud on COM6, for example `python -m platformio device monitor`).
+6. Set `stallCap` to a value no higher than `cap`:
+   `set stallCap <value>`
+   `save`
+   Example: If R is 1.0 Ohm, `stall_amps = 12 A`. `stallCap` must be set to `4.0 / 12.0 = 0.33` or lower.
+
+## 7. Bring-Up and Test Sequence
+
+All steps must be conducted with the robot elevated on test blocks and wheels completely free of contact with surfaces. Keep fingers clear of wheels and rotating parts.
+
+### Serial Console Operation
+- Port: COM6 at 115200 baud (for example `python -m platformio device monitor`).
+- Console commands work only while disarmed.
+- Available commands:
+  - `status`: Toggle live 200 ms status output.
+  - `set <name> <value>`: Modify parameter in RAM.
+  - `show`: Display current configuration.
+  - `save`: Save settings to NVS flash.
+  - `defaults`: Reset parameters in RAM to defaults (requires `save` to persist).
+  - `log`: Output comma-separated telemetry log from RAM.
+- Notice: `outputHz` needs `save` plus a reboot to take effect.
+- Notice: Heading and LED alignment and all default settings are unverified starting values.
+
+### Step 1: iBUS Read Verification
+1. Power receiver and ESP32 with wheels on blocks. Disarm transmitter (SwA down).
+2. Open serial monitor. Verify the status line displays:
+   `CH1=... CH2=... CH3=... CH4=... CH5=... signal=ok ...`
+3. Check channel responses:
+   - CH1 moves 1000 to 2000 us with right stick X.
+   - CH2 moves 1000 to 2000 us with right stick Y.
+   - CH3 moves 1000 to 2000 us with left stick Y.
+   - CH4 moves 1000 to 2000 us with left stick X.
+   - CH5 switches from ~1000 us (disarmed) to ~2000 us (armed) with SwA.
+4. If signal shows `lost` or values do not update, check iBUS wiring and transmitter output mode.
+
+### Step 2: Sensor Setup and Heading Calibration
+1. Mount MPU-6050 approximately 10 mm from the chassis spin center.
+2. Measure physical distance from the center of rotation to the accelerometer chip package in meters.
+3. Power the ESP32 and open serial monitor. Confirm `sensor=ok` appears in the status stream.
+4. Rotate the robot slowly by hand in the intended spin direction while observing `radial`:
+   - If `radial` remains near zero, switch axis: `set radialAxis 1` followed by `save`.
+   - If `radial` increases with a negative sign during spin, set `radialSign -1` followed by `save`.
+   - Confirm hand spin produces a positive `radial` value.
+5. Invert the robot by hand:
+   - Status output should display `flipped=1` when upside down and `flipped=0` when upright.
+   - If inverted state is opposite, toggle `zSign -1` followed by `save`.
+6. Set measured sensor radius:
+   `set radiusM <meters>`
+   `save`
+7. Heading calibration:
+   - If RPM or the LED drifts, adjust `radiusM` in small increments.
+   - Use `phaseRad` to align drive direction:
+     `set phaseRad <radians>`
+     `save`
+
+### Step 3: ESC Signal Verification on Test Blocks
+1. Ensure chassis is securely supported on test blocks.
+2. Connect ESC signal lines (GPIO25 to Motor A, GPIO26 to Motor B).
+3. Power on. Verify motors stay completely stationary while disarmed.
+4. Perform arming sequence: Left stick full down, right stick full left, flip SwA to armed.
+5. Slowly advance CH3 throttle. Verify both motors spin in directions that produce forward robot rotation:
+   - If Motor A spins in reverse, disarm and enter: `set reverseA 1`, then `save`.
+   - If Motor B spins in reverse, disarm and enter: `set reverseB 1`, then `save`.
+6. Disarm (flip SwA down). Verify motors stop immediately.
+
+### Step 4: The 7-Step Failsafe Test
+Conduct this exact 7-step test on test blocks before any free-running operation:
+1. Power on with SwA armed, then raise CH3: motors must stay still.
+2. Arm and spin slowly, then turn off the transmitter: motors must get zero output within about one second. The rule limit is 2.0 s.
+   Notice: If failsafe test step 2 fails, the robot doesn't fight until fixed. The FS-iA6B's iBUS behavior on signal loss is unconfirmed.
+3. Turn the transmitter back on with SwA still armed, then raise CH3: motors must stay stopped until the full arming sequence is repeated.
+4. Arm and spin slowly, then unplug iBUS: motors must stop.
+5. Arm and spin slowly, then hold the ESP32 in reset: motors must stop.
+6. Arm and spin slowly, then unplug the sensor: translation and LED must stop, and disarming must stop the motors.
+7. Power cycle with the ESC connected several times: motors must not twitch at any point.
+
+### Step 5: Jam Protection Test
+1. With wheels on blocks and `stallCap` configured, arm the robot.
+2. Apply a light spin command (above `minRpm` threshold).
+3. Safely simulate a wheel stall by gently applying friction to slow the wheel below `minRpm` (for example, holding with a wooden stick or gloved hand, avoiding pinch points).
+4. Verify motor power cuts back to `stallCap` after 1.0 second of stalled condition.
+5. Release friction and verify spin accelerates back to commanded speed once RPM exceeds `minRpm`.
+
+### Step 6: Spin-Up Verification
+1. Conduct inside a fully enclosed test arena or containment box.
+2. With robot on the floor inside the enclosure, arm and gradually raise CH3 throttle.
+3. Verify smooth acceleration without sudden jerks or ESC thermal shutdown.
+4. Check LED flashing behavior once robot exceeds `minRpm`.
+
+### Step 7: Flipped Driving Test
+1. Place robot inverted inside the test arena.
+2. Arm and spin up.
+3. Command translation using right stick (CH1 and CH2).
+4. Verify translation direction and LED orientation match driver stick perspective without inverted controls.
+
+### Step 8: Spin-Down Time Under 60 Seconds
+1. Spin robot up to full operating speed inside the arena.
+2. Flip SwA to disarm or switch off transmitter to trigger failsafe.
+3. Start a stopwatch at the moment of cutoff.
+4. Measure elapsed time until robot reaches a dead stop.
+5. Verify total deceleration time is under 60 seconds to satisfy KSU rules.
+
+## 8. What to Send Back After Each Stage
+
+Provide the following test artifacts and measurements after completing each stage:
+
+1. Stage 1 (Radio and iBUS):
+   - Copy of status line at center sticks.
+   - Verified pulse width extremes for CH1 through CH5 (stick limits and SwA).
+2. Stage 2 (Sensor setup):
+   - Status line at rest and during slow hand spin.
+   - Selected values for `radialAxis`, `radialSign`, `zSign`, and measured `radiusM`.
+3. Stage 3 (Motor and ESC):
+   - Motor winding resistance measurement in Ohms.
+   - Calculated stall current and selected `stallCap`.
+   - Settings for `reverseA` and `reverseB`.
+4. Stage 4 (Failsafe 7-step test):
+   - Explicit Pass/Fail confirmation for each step from 1 through 7.
+   - Measured time to zero output on transmitter switch-off in step 2.
+5. Stages 5 to 8 (Dynamics, Jam, Spin, Inversion, Spin-down):
+   - Disarm the robot, connect USB, and execute `log` command in the console.
+   - Send captured CSV telemetry log (`ms,rpm,radialG,aUs,bUs`).
+   - Timed spin-down duration in seconds.
