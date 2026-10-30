@@ -18,6 +18,7 @@ void HeadingTracker::update(float radialG, float radiusM, float trimRadPerSec, u
     }
     headingRad_ = std::fmod(headingRad_ + (rpm_ * kTwoPi / 60.0f + trimRadPerSec) * (dtUs / 1000000.0f), kTwoPi);
     if (headingRad_ < 0) headingRad_ += kTwoPi;
+    if (headingRad_ >= kTwoPi) headingRad_ = 0;  // a tiny negative remainder rounds up to exactly 2pi
 }
 
 float HeadingTracker::headingRad() const { return headingRad_; }

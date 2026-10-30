@@ -19,6 +19,12 @@ void test_heading_stays_wrapped() {
     h.update(k600RpmG, kRadius, -100.0f, 1000000, 1);
     TEST_ASSERT_TRUE(h.headingRad() >= 0 && h.headingRad() < 6.283186f);
 }
+
+void test_tiny_negative_step_stays_below_two_pi() {
+    HeadingTracker h;
+    h.update(NAN, kRadius, -0.0001f, 1, 0);
+    TEST_ASSERT_TRUE(h.headingRad() >= 0 && h.headingRad() < 2.0f * 3.14159265358979323846f);
+}
 void test_trim_shifts_heading() {
     HeadingTracker h;
     h.update(k600RpmG, kRadius, 1.0f, 100000, 0);
@@ -74,7 +80,8 @@ void test_flip_after_sustained_inversion() {
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_rpm_16g_10mm_is_near_1197); RUN_TEST(test_heading_full_turn);
-    RUN_TEST(test_heading_stays_wrapped); RUN_TEST(test_trim_shifts_heading);
+    RUN_TEST(test_heading_stays_wrapped); RUN_TEST(test_tiny_negative_step_stays_below_two_pi);
+    RUN_TEST(test_trim_shifts_heading);
     RUN_TEST(test_clipped_reading_holds_rpm); RUN_TEST(test_nan_and_negative_hold_rpm);
     RUN_TEST(test_recovers_on_next_good_reading); RUN_TEST(test_sensor_ok_false_at_500ms);
     RUN_TEST(test_flip_ignores_short_impact); RUN_TEST(test_flip_after_sustained_inversion);
