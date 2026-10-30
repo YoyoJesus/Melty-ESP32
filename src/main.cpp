@@ -20,7 +20,7 @@ static HeadingTracker tracker;
 static FlipDetector flip;
 static JamGuard jam;
 static RunLog<3000> runLog;
-static bool startupOk, statusEnabled = true, wasArmed;
+static bool startupOk, statusEnabled = true, wasArmed, outputPending, saveRunPending;
 static float radial, spin;
 static uint32_t lastLoop, lastFlip, lastOutput, lastLog, lastStatus, lastControlMs;
 static char line[80];
@@ -62,10 +62,9 @@ static void consolePoll() {
         else if (result == ConsoleResult::DumpLog) {
             Serial.println("ms,rpm,radialG,aUs,bUs");
             for (size_t i = 0; i < runLog.size(); ++i) {
-                const LogEntry& e = runLog.at(i);
-                Serial.printf("%lu,%g,%g,%u,%u\n", static_cast<unsigned long>(e.ms), e.rpm, e.radialG, e.aUs, e.bUs);
-                esp_task_wdt_reset();
+                storePrintEntry(Serial, runLog.at(i));
             }
+            if (!runLog.size()) storeDumpRun(Serial);
         } else if (result == ConsoleResult::Ok && strcmp(line, "show") == 0) {
             char output[512]; formatSettings(settings, output, sizeof(output)); Serial.print(output);
         }
@@ -75,12 +74,13 @@ static void consolePoll() {
 void setup() {
     storeLoad(settings);
     outputHz = settings.outputHz;
-    escBegin(outputHz);
+    escBegin();
     Serial.begin(115200);
+    esp_log_level_set("*", ESP_LOG_NONE);
+    storeBegin();
     Serial2.begin(115200, SERIAL_8N1, 16, -1);
     pinMode(27, OUTPUT); digitalWrite(27, LOW);
     startupOk = mpuBegin() && mpuRestCheck(); safety.setSensorStartupOk(startupOk);
-    esp_log_level_set("*", ESP_LOG_NONE);
     if (xTaskCreatePinnedToCore(sensorTask, "sensor", 4096, nullptr, 1, nullptr, 0) != pdPASS) abort();
     esp_task_wdt_config_t config{250, 0, true};
     esp_err_t result = esp_task_wdt_status(nullptr);
@@ -103,18 +103,18 @@ void loop() {
         lineLength = 0; overflow = false;
         while (Serial.available()) Serial.read();
     }
-    int available = Serial2.available();
+    int available = !wasArmed && (outputPending || saveRunPending) ? 0 : Serial2.available();
     for (int i = 0; i < available; ++i) {
         IbusFrame incoming;
         if (parser.push(static_cast<uint8_t>(Serial2.read()), incoming)) {
             frame = incoming; safety.onFrame(frame, nowMs);
-            if (wasArmed && !safety.armed()) { escWrite(kNeutral); digitalWrite(27, LOW); wasArmed = false; }
+            if (wasArmed && !safety.armed()) { outputPending = true; saveRunPending = runLog.size() > 0; digitalWrite(27, LOW); wasArmed = false; break; }
             else if (!wasArmed && safety.armed()) { runLog.clear(); spin = 0; jam = JamGuard{}; wasArmed = true; }
         }
     }
     safety.update(nowMs);
     bool armed = safety.armed();
-    if (wasArmed && !armed) { escWrite(kNeutral); digitalWrite(27, LOW); }
+    if (wasArmed && !armed) { outputPending = true; saveRunPending = runLog.size() > 0; digitalWrite(27, LOW); }
     if (!wasArmed && armed) { runLog.clear(); spin = 0; jam = JamGuard{}; }
     wasArmed = armed;
     portENTER_CRITICAL(&sensorMux);
@@ -124,14 +124,19 @@ void loop() {
     lastSensorSeq = sample.seq;
     if (readOk) { lastGoodZ = sample.zG; hasGoodZ = true; }
     radial = readOk ? (settings.radialAxis == 0 ? sample.xG : sample.yG) * settings.radialSign : NAN;
-    tracker.update(radial, settings.radiusM, stick(frame.ch[3]) * settings.trimRadPerSec, dtUs, nowMs);
+    tracker.update(radial, settings.radiusM, mirrored(stick(frame.ch[3]) * settings.trimRadPerSec, flip.flipped()), dtUs, nowMs);
     if (nowMs - lastFlip >= 10) { lastFlip = nowMs; if (hasGoodZ) flip.update(lastGoodZ, settings.zSign, settings.flipFilterMs, 10); }
     if (!armed) {
-        spin = 0; escWrite(kNeutral); digitalWrite(27, LOW);
+        spin = 0; digitalWrite(27, LOW);
+        if (outputPending || lastOutput == 0 || nowUs - lastOutput >= 1000000 / outputHz) {
+            outputPending = !escWrite(kNeutral); lastOutput = nowUs;
+        }
+        if (saveRunPending && !outputPending) { storeSaveRun(runLog); saveRunPending = false; }
+        if (outputPending) { esp_task_wdt_reset(); return; }
         consolePoll();
         if (statusEnabled && nowMs - lastStatus >= 200) {
             lastStatus = nowMs;
-            Serial.printf("CH1=%u CH2=%u CH3=%u CH4=%u CH5=%u signal=%s sensor=%s radial=%g rpm=%g flipped=%d\n", frame.ch[0], frame.ch[1], frame.ch[2], frame.ch[3], frame.ch[4], safety.signalOk() ? "ok" : "lost", startupOk ? "ok" : "failed", radial, tracker.rpm(), flip.flipped());
+            Serial.printf("CH1=%u CH2=%u CH3=%u CH4=%u CH5=%u signal=%s startup=%s sensor=%s storage=%s radial=%g rpm=%g flipped=%d\n", frame.ch[0], frame.ch[1], frame.ch[2], frame.ch[3], frame.ch[4], safety.signalOk() ? "ok" : "lost", startupOk ? "ok" : "failed", tracker.sensorOk(nowMs) ? "live" : "stale", storeRunStatus(), radial, tracker.rpm(), flip.flipped());
         }
         esp_task_wdt_reset(); return;
     }
@@ -141,8 +146,8 @@ void loop() {
     float power = jam.apply(spin, tracker.rpm(), settings.stallCap, settings.minRpm, dtMs);
     bool sensorOk = tracker.sensorOk(nowMs);
     float heading = effectiveHeading(tracker.headingRad(), flip.flipped());
-    MotorPulses pulses = computePulses({power, stick(frame.ch[0]), stick(frame.ch[1]), heading, tracker.rpm(), sensorOk}, {settings.minRpm, settings.strength, settings.phaseRad, settings.reverseA, settings.reverseB});
-    if (nowUs - lastOutput >= 1000000 / outputHz) { lastOutput = nowUs; escWrite(pulses); }
+    MotorPulses pulses = computePulses({power, stick(frame.ch[0]), stick(frame.ch[1]), heading, tracker.rpm(), sensorOk}, {settings.minRpm, settings.strength, mirrored(settings.phaseRad, flip.flipped()), settings.reverseA, settings.reverseB});
+    if (outputPending || nowUs - lastOutput >= 1000000 / outputHz) { lastOutput = nowUs; outputPending = !escWrite(pulses); }
     digitalWrite(27, ledOn(heading, settings.ledArcRad, sensorOk) ? HIGH : LOW);
     if (nowMs - lastLog >= 20) { lastLog = nowMs; runLog.add({nowMs, tracker.rpm(), radial, pulses.aUs, pulses.bUs}); }
     esp_task_wdt_reset();

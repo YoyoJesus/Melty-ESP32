@@ -23,3 +23,4 @@ bool ledOn(float headingRad, float arcRad, bool sensorOk);
 float effectiveHeading(float headingRad, bool flipped);
 float stick(uint16_t ch);
 float spinCommand(uint16_t ch3);
+inline float mirrored(float value, bool flipped) { return flipped ? -value : value; }

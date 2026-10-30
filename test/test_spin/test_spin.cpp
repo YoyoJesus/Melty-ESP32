@@ -2,6 +2,7 @@
 #include <stdint.h>
 #include <unity.h>
 #include "spin.h"
+#include "drive.h"
 
 constexpr float kRadius = 0.01f;
 constexpr float k600RpmG = 4.0257f;
@@ -77,8 +78,24 @@ void test_flip_after_sustained_inversion() {
     for (int i = 0; i < 200; ++i) f.update(1, -1, 1000, 10);
     TEST_ASSERT_TRUE(f.flipped());
 }
+void test_sensor_loss_cuts_translation_and_led_but_keeps_spin() {
+    HeadingTracker h;
+    for (uint32_t ms = 0; ms <= 100; ++ms) h.update(k600RpmG, kRadius, 0, 1000, ms);
+    auto p = computePulses({0.5f, 0, 1, 0, h.rpm(), h.sensorOk(100)}, {100, 0.2f, 0, false, false});
+    TEST_ASSERT_NOT_EQUAL(p.aUs, p.bUs);
+    for (uint32_t ms = 101; ms <= 600; ++ms) {
+        h.update(NAN, kRadius, 0, 1000, ms);
+        if (ms == 599) TEST_ASSERT_TRUE(h.sensorOk(ms));
+    }
+    TEST_ASSERT_FALSE(h.sensorOk(600));
+    p = computePulses({0.5f, 0, 1, 0, h.rpm(), h.sensorOk(600)}, {100, 0.2f, 0, false, false});
+    TEST_ASSERT_EQUAL_UINT16(p.aUs, p.bUs);
+    TEST_ASSERT_GREATER_THAN_UINT16(1500, p.aUs);
+    TEST_ASSERT_FALSE(ledOn(0, 1, h.sensorOk(600)));
+}
 int main() {
     UNITY_BEGIN();
+    RUN_TEST(test_sensor_loss_cuts_translation_and_led_but_keeps_spin);
     RUN_TEST(test_rpm_16g_10mm_is_near_1197); RUN_TEST(test_heading_full_turn);
     RUN_TEST(test_heading_stays_wrapped); RUN_TEST(test_tiny_negative_step_stays_below_two_pi);
     RUN_TEST(test_trim_shifts_heading);

@@ -101,15 +101,15 @@ The Repeat Robotics dual brushed ESC is listed at 2 A continuous and 4 A burst. 
 
 1. Disconnect motor leads from the ESC.
 2. Using a multimeter, measure winding resistance (R) across the motor terminals. Subtract probe lead resistance.
-3. Calculate maximum stall current at nominal 12 V:
-   `stall_amps = 12.0 / R`
+3. Estimate maximum stall current at full charge (12.6 V):
+   `stall_amps = 12.6 / R`
 4. Calculate the stall power cap:
-   `cap = 4.0 / stall_amps`
+   `cap = 2.0 / stall_amps`
 5. Connect to the ESP32 serial console (115200 baud on COM6, for example `python -m platformio device monitor`).
 6. Set `stallCap` to a value no higher than `cap`:
    `set stallCap <value>`
    `save`
-   Example: If R is 1.0 Ohm, `stall_amps = 12 A`. `stallCap` must be set to `4.0 / 12.0 = 0.33` or lower.
+   Example: If R is 1.0 Ohm, `stall_amps = 12.6 A` and `cap = 2.0 / 12.6 = 0.159`. Set `stallCap` no higher than 0.159. This is an estimate; check current with a clamp meter or inline meter if available.
 
 ## 7. Bring-Up and Test Sequence
 
@@ -124,7 +124,7 @@ All steps must be conducted with the robot elevated on test blocks and wheels co
   - `show`: Display current configuration.
   - `save`: Save settings to NVS flash.
   - `defaults`: Reset parameters in RAM to defaults (requires `save` to persist).
-  - `log`: Output comma-separated telemetry log from RAM.
+  - `log`: Output CSV telemetry from RAM if present, otherwise from the saved run in LittleFS. It works after a power cycle. Each new disarm with a nonempty log overwrites the saved run. A storage failure is reported by `storage=` in status or by `log`; RAM logging and robot control continue.
 - Notice: `outputHz` needs `save` plus a reboot to take effect.
 - Notice: Heading and LED alignment and all default settings are unverified starting values.
 
@@ -133,17 +133,18 @@ All steps must be conducted with the robot elevated on test blocks and wheels co
 2. Open serial monitor. Verify the status line displays:
    `CH1=... CH2=... CH3=... CH4=... CH5=... signal=ok ...`
 3. Check channel responses:
-   - CH1 moves 1000 to 2000 us with right stick X.
-   - CH2 moves 1000 to 2000 us with right stick Y.
-   - CH3 moves 1000 to 2000 us with left stick Y.
-   - CH4 moves 1000 to 2000 us with left stick X.
-   - CH5 switches from ~1000 us (disarmed) to ~2000 us (armed) with SwA.
+   - Right stick full right: CH1 2000 us.
+   - Right stick forward: CH2 2000 us.
+   - Left stick up: CH3 2000 us.
+   - Left stick right: CH4 2000 us.
+   - SwA armed: CH5 2000 us.
+   - If any is backwards, flip it in the i6 Reverse menu.
 4. If signal shows `lost` or values do not update, check iBUS wiring and transmitter output mode.
 
 ### Step 2: Sensor Setup and Heading Calibration
 1. Mount MPU-6050 approximately 10 mm from the chassis spin center.
 2. Measure physical distance from the center of rotation to the accelerometer chip package in meters.
-3. Power the ESP32 and open serial monitor. Confirm `sensor=ok` appears in the status stream.
+3. Power the ESP32 and open serial monitor. Confirm `startup=ok` and `sensor=live` appear in the status stream.
 4. Hold the robot on edge, with the sensor directly below the spin center, so the direction from sensor to center points straight up. `radial` should read close to +1.0:
    - If `radial` is near zero, switch axis: `set radialAxis 1` followed by `save`, then check again.
    - If `radial` is close to -1.0, set `radialSign -1` followed by `save`.
@@ -163,7 +164,7 @@ All steps must be conducted with the robot elevated on test blocks and wheels co
 ### Step 3: ESC Signal Verification on Test Blocks
 1. Ensure chassis is securely supported on test blocks.
 2. Connect ESC signal lines (GPIO25 to Motor A, GPIO26 to Motor B).
-3. Power on. Verify motors stay completely stationary while disarmed.
+3. Power on. Verify motors stay completely stationary while disarmed. Output uses one-shot RMT pulses at the boot-time `outputHz`; if the CPU or loop stops, pulses stop. Verify ESC signal-loss stopping in failsafe step 5. On disarm, neutral replaces any pending command and is retried without waiting when an in-flight pulse finishes (at most about 2 ms).
 4. Perform arming sequence: Left stick full down, right stick full left, flip SwA to armed.
 5. Slowly advance CH3 throttle. Verify both motors spin in directions that produce forward robot rotation:
    - If Motor A spins in reverse, disarm and enter: `set reverseA 1`, then `save`.
@@ -178,7 +179,7 @@ Conduct this exact 7-step test on test blocks before any free-running operation:
 3. Turn the transmitter back on with SwA still armed, then raise CH3: motors must stay stopped until the full arming sequence is repeated.
 4. Arm and spin slowly, then unplug iBUS: motors must stop.
 5. Arm and spin slowly, then hold the ESP32 in reset: motors must stop.
-6. Arm and spin slowly, then unplug the sensor: translation and LED must stop, and disarming must stop the motors.
+6. On blocks, with `status` on and disarmed, unplug the sensor and confirm `sensor=stale` replaces `sensor=live` after 500 ms. Reboot with the sensor unplugged: `startup=failed` must appear and arming must be refused. Reconnect the sensor and reboot; then arm, spin slowly, and unplug it: the LED must stop and disarming must still stop the motors. Translation cutoff is covered by the host sequence test; blocks cannot demonstrate it.
 7. Power cycle with the ESC connected several times: motors must not twitch at any point.
 
 ### Step 5: Jam Protection Test
@@ -186,7 +187,7 @@ Never touch or hold a running wheel. The chassis does not rotate on blocks, so m
 
 1. With wheels on blocks, clear of everything, and `stallCap` configured, arm the robot.
 2. Raise CH3 above the `stallCap` level, then hold it for at least 3 seconds.
-3. Disarm, connect USB, and run `log`. Verify `aUs` and `bUs` level off at the `stallCap` output about 1 second after power passes the cap. For example, a cap of 0.3 gives 1650 us, or 1350 us on a reversed motor.
+3. Disarm and allow the saved run write to complete before removing power. Disconnect BEC power before connecting USB as described in section 5, then run `log`, even after a power cycle. Verify `aUs` and `bUs` level off at the `stallCap` output about 1 second after power passes the cap. For example, a cap of 0.3 gives 1650 us, or 1350 us on a reversed motor.
 4. Expect this limit in all testing on blocks, since RPM stays below `minRpm`.
 
 ### Step 6: Spin-Up Verification
@@ -194,7 +195,7 @@ Never touch or hold a running wheel. The chassis does not rotate on blocks, so m
 2. With robot on the floor inside the enclosure, arm and gradually raise CH3 throttle.
 3. Verify smooth acceleration without sudden jerks or ESC thermal shutdown.
 4. Check LED flashing behavior once robot exceeds `minRpm`.
-5. If the robot stalls at low speed and never reaches `minRpm`, the stall cap is holding it down. Lower `minRpm` with `set minRpm <rpm>` and `save` before raising `stallCap`, and do not raise `stallCap` above the section 6 value.
+5. A slow spin-up can be held at the stall cap below `minRpm`, so set `stallCap` and `minRpm` from measured spin-up behavior. If the robot stalls at low speed and never reaches `minRpm`, the stall cap is holding it down. Lower `minRpm` with `set minRpm <rpm>` and `save` before raising `stallCap`, and do not raise `stallCap` above the section 6 value.
 
 ### Step 7: Flipped Driving Test
 1. Place robot inverted inside the test arena.
@@ -227,6 +228,6 @@ Provide the following test artifacts and measurements after completing each stag
    - Explicit Pass/Fail confirmation for each step from 1 through 7.
    - Measured time to zero output on transmitter switch-off in step 2.
 5. Stages 5 to 8 (Dynamics, Jam, Spin, Inversion, Spin-down):
-   - Disarm the robot, connect USB, and execute `log` command in the console.
+   - Disarm and allow the saved run write to complete, disconnect BEC power per section 5, connect USB, and execute `log`. The saved run survives reboot; each new nonempty disarm overwrites it.
    - Send captured CSV telemetry log (`ms,rpm,radialG,aUs,bUs`).
    - Timed spin-down duration in seconds.
