@@ -33,10 +33,13 @@ void storeSaveRun(const RunLog<3000>& log) {
         while (count < 32 && i < log.size()) chunk[count++] = log.at(i++);
         const size_t bytes = count * sizeof(LogEntry);
         ok = file.write(reinterpret_cast<const uint8_t*>(chunk), bytes) == bytes;
-        esp_task_wdt_reset();
     }
     file.close();
-    esp_task_wdt_reset();
+    // File::close() discards flush errors, so confirm what actually reached flash.
+    if (ok) {
+        File saved = LittleFS.open("/run.bin", FILE_READ);
+        ok = saved && saved.size() == log.size() * sizeof(LogEntry);
+    }
     if (!ok) LittleFS.remove("/run.bin");
     runStatus = ok ? "ok" : "write-failed";
 }

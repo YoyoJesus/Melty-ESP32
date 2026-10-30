@@ -21,7 +21,7 @@ static FlipDetector flip;
 static JamGuard jam;
 static RunLog<3000> runLog;
 static bool startupOk, statusEnabled = true, wasArmed, outputPending, saveRunPending;
-static float radial, spin;
+static float radial, lastRadial, spin;
 static uint32_t lastLoop, lastFlip, lastOutput, lastLog, lastStatus, lastControlMs;
 static char line[80];
 static size_t lineLength;
@@ -124,6 +124,7 @@ void loop() {
     lastSensorSeq = sample.seq;
     if (readOk) { lastGoodZ = sample.zG; hasGoodZ = true; }
     radial = readOk ? (settings.radialAxis == 0 ? sample.xG : sample.yG) * settings.radialSign : NAN;
+    if (readOk) lastRadial = radial;
     tracker.update(radial, settings.radiusM, mirrored(stick(frame.ch[3]) * settings.trimRadPerSec, flip.flipped()), dtUs, nowMs);
     if (nowMs - lastFlip >= 10) { lastFlip = nowMs; if (hasGoodZ) flip.update(lastGoodZ, settings.zSign, settings.flipFilterMs, 10); }
     if (!armed) {
@@ -131,12 +132,13 @@ void loop() {
         if (outputPending || lastOutput == 0 || nowUs - lastOutput >= 1000000 / outputHz) {
             outputPending = !escWrite(kNeutral); lastOutput = nowUs;
         }
-        if (saveRunPending && !outputPending) { storeSaveRun(runLog); saveRunPending = false; }
+        // Flash writes can outlast the watchdog. Disarmed here, and a stalled loop sends no pulses.
+        if (saveRunPending && !outputPending) { esp_task_wdt_delete(nullptr); storeSaveRun(runLog); esp_task_wdt_add(nullptr); saveRunPending = false; }
         if (outputPending) { esp_task_wdt_reset(); return; }
         consolePoll();
         if (statusEnabled && nowMs - lastStatus >= 200) {
             lastStatus = nowMs;
-            Serial.printf("CH1=%u CH2=%u CH3=%u CH4=%u CH5=%u signal=%s startup=%s sensor=%s storage=%s radial=%g rpm=%g flipped=%d\n", frame.ch[0], frame.ch[1], frame.ch[2], frame.ch[3], frame.ch[4], safety.signalOk() ? "ok" : "lost", startupOk ? "ok" : "failed", tracker.sensorOk(nowMs) ? "live" : "stale", storeRunStatus(), radial, tracker.rpm(), flip.flipped());
+            Serial.printf("CH1=%u CH2=%u CH3=%u CH4=%u CH5=%u signal=%s startup=%s sensor=%s storage=%s radial=%g rpm=%g flipped=%d\n", frame.ch[0], frame.ch[1], frame.ch[2], frame.ch[3], frame.ch[4], safety.signalOk() ? "ok" : "lost", startupOk ? "ok" : "failed", tracker.sensorOk(nowMs) ? "live" : "stale", storeRunStatus(), lastRadial, tracker.rpm(), flip.flipped());
         }
         esp_task_wdt_reset(); return;
     }
@@ -149,6 +151,6 @@ void loop() {
     MotorPulses pulses = computePulses({power, stick(frame.ch[0]), stick(frame.ch[1]), heading, tracker.rpm(), sensorOk}, {settings.minRpm, settings.strength, mirrored(settings.phaseRad, flip.flipped()), settings.reverseA, settings.reverseB});
     if (outputPending || nowUs - lastOutput >= 1000000 / outputHz) { lastOutput = nowUs; outputPending = !escWrite(pulses); }
     digitalWrite(27, ledOn(heading, settings.ledArcRad, sensorOk) ? HIGH : LOW);
-    if (nowMs - lastLog >= 20) { lastLog = nowMs; runLog.add({nowMs, tracker.rpm(), radial, pulses.aUs, pulses.bUs}); }
+    if (nowMs - lastLog >= 20) { lastLog = nowMs; runLog.add({nowMs, tracker.rpm(), lastRadial, pulses.aUs, pulses.bUs}); }
     esp_task_wdt_reset();
 }
