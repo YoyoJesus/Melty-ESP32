@@ -28,11 +28,12 @@ float JamGuard::apply(float power, float rpm, float capPower, float minRpm, uint
 }
 
 MotorPulses computePulses(const DriveInput& in, const DriveTuning& t) {
+    const float spin = std::clamp(in.spin, 0.0f, 1.0f);
+    if (spin <= 0) return kNeutral;
     const float mag = std::min(1.0f, std::hypot(in.x, in.y));
     const float dir = std::atan2(in.x, in.y);
     const float sign = std::cos(in.headingRad - dir - t.phaseRad) >= 0 ? 1.0f : -1.0f;
-    const float d = in.translationAllowed && in.rpm >= t.minRpm && mag > 0 ? t.strength * mag * sign : 0;
-    const float spin = std::clamp(in.spin, 0.0f, 1.0f);
+    const float d = in.translationAllowed && in.rpm >= t.minRpm && mag > 0 ? std::min(t.strength * mag, spin) * sign : 0;
     return {pulse(std::clamp(spin + d, 0.0f, 1.0f), t.reverseA),
             pulse(std::clamp(spin - d, 0.0f, 1.0f), t.reverseB)};
 }

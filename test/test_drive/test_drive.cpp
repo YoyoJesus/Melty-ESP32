@@ -11,8 +11,12 @@ void test_ramp_limits_rise_and_drops_instantly() {
     TEST_ASSERT_EQUAL_FLOAT(0.1f, rampStep(0.8f, 0.1f, 0.4f, 250));
 }
 void test_zero_spin_is_exact_neutral() {
-    auto p = computePulses({0, 0, 0, 0, 0, false}, tuning);
+    auto p = computePulses({0, 0, 1, 0, 200, true}, tuning);
     TEST_ASSERT_EQUAL_UINT16(1500, p.aUs); TEST_ASSERT_EQUAL_UINT16(1500, p.bUs);
+}
+void test_low_spin_limits_translation() {
+    auto p = computePulses({0.1f, 0, 1, 0, 200, true}, tuning);
+    TEST_ASSERT_TRUE(p.aUs <= 1600); TEST_ASSERT_TRUE(p.bUs <= 1600);
 }
 void test_pulses_never_cross_neutral() {
     for (int h = 0; h < 36; ++h) for (int s = -1; s <= 11; ++s) for (int x = -1; x <= 1; ++x) {
@@ -89,7 +93,7 @@ void test_stick_deadband_and_limits() {
 int main() {
     UNITY_BEGIN();
     RUN_TEST(test_ramp_limits_rise_and_drops_instantly); RUN_TEST(test_zero_spin_is_exact_neutral);
-    RUN_TEST(test_pulses_never_cross_neutral); RUN_TEST(test_reverse_mirrors_around_1500);
+    RUN_TEST(test_low_spin_limits_translation); RUN_TEST(test_pulses_never_cross_neutral); RUN_TEST(test_reverse_mirrors_around_1500);
     RUN_TEST(test_no_translation_below_min_rpm); RUN_TEST(test_no_translation_when_disallowed);
     RUN_TEST(test_centered_stick_no_translation); RUN_TEST(test_translation_opposes_half_turn_apart);
     RUN_TEST(test_jam_caps_after_1000ms); RUN_TEST(test_jam_ignored_at_or_below_cap);

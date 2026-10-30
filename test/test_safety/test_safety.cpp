@@ -28,6 +28,7 @@ void test_out_of_range_used_channel_disarms() {
 }
 void test_failsafe_then_return_with_switch_armed_stays_disarmed() { Safety s; arm(s); s.onFrame(frame(1000, 1500), 2); s.onFrame(frame(1800, 1500), 3); TEST_ASSERT_FALSE(s.armed()); }
 void test_timeout_then_frames_resume_armed_stays_disarmed() { Safety s; arm(s); s.update(101); s.onFrame(frame(1800), 102); TEST_ASSERT_FALSE(s.armed()); }
+void test_frame_after_timeout_without_update_disarms() { Safety s; arm(s); s.onFrame(frame(1800), 101); TEST_ASSERT_FALSE(s.armed()); }
 void test_time_wraparound() { Safety s; arm(s, UINT32_MAX - 50); s.update(49); TEST_ASSERT_TRUE(s.armed()); s.update(50); TEST_ASSERT_FALSE(s.armed()); }
 int main() {
     UNITY_BEGIN();
@@ -35,6 +36,6 @@ int main() {
     RUN_TEST(test_edge_with_stick_centered_does_not_arm_until_repeated); RUN_TEST(test_edge_with_throttle_up_does_not_arm);
     RUN_TEST(test_edge_without_sensor_ok_does_not_arm); RUN_TEST(test_ch5_low_disarms); RUN_TEST(test_timeout_at_100ms_disarms_and_99ms_does_not);
     RUN_TEST(test_failsafe_flag_disarms); RUN_TEST(test_out_of_range_used_channel_disarms); RUN_TEST(test_failsafe_then_return_with_switch_armed_stays_disarmed);
-    RUN_TEST(test_timeout_then_frames_resume_armed_stays_disarmed); RUN_TEST(test_time_wraparound);
+    RUN_TEST(test_timeout_then_frames_resume_armed_stays_disarmed); RUN_TEST(test_frame_after_timeout_without_update_disarms); RUN_TEST(test_time_wraparound);
     return UNITY_END();
 }

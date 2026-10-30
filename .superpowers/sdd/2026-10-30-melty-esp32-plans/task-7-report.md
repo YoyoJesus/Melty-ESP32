@@ -129,3 +129,14 @@ Verification commands and output:
 ```
 
 Without wiring, receiver backlog and arming, actual sensor samples and a stuck bus, motor pulse neutrality and timing, and armed watchdog behavior could not be exercised. Hardware safety validation remains necessary before operating the robot.
+
+## Final review fixes, partial
+
+Status: BLOCKED. Finding 2 was implemented: zero spin returns neutral and translation is capped by spin. Finding 9 gained the requested frame-after-gap regression test. Findings 1 and 3 through 8, the guide addition, flashing, and serial verification remain unfinished.
+
+The installed Arduino `esp32-hal-rmt.c` returns false from `rmtWriteAsync` when the previous transmission is pending. This leaves the required immediate neutral transmission on disarm unresolved when disarm occurs during a pulse; no unverified motor-output change was made. Armed operation, RMT pulses, and LittleFS run-write were not tested without wiring.
+
+Commands and output:
+- `wsl -- bash -lc "cd /mnt/c/users/austin/onedrive/documents/github/Melty-ESP32 && PLATFORMIO_BUILD_DIR=/tmp/melty-pio ~/.venvs/pio/bin/pio test -e native -f test_drive"`: before the fix, zero-spin expected 1500 but got 1600, and low-spin limit failed; the process also reported SIGINT.
+- `wsl -- bash -lc "cd /mnt/c/users/austin/onedrive/documents/github/Melty-ESP32 && PLATFORMIO_BUILD_DIR=/tmp/melty-pio ~/.venvs/pio/bin/pio test -e native"`: 55 test cases, 55 succeeded.
+- `python -m serial.tools.list_ports -v`: COM6 detected as Silicon Labs CP210x.
