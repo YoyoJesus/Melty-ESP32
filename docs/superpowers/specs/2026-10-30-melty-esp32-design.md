@@ -146,7 +146,7 @@ USB serial on COM6 at 115200. Commands are accepted only while disarmed. Setting
 
 Serial shows a live status line while disarmed, with channels, failsafe state, acceleration, and estimated RPM, for setup and testing.
 
-A spinning robot cannot stay on USB, so the firmware records a short run log to RAM while armed, with time, estimated RPM, sensor reading, and motor output. It is dumped over USB after disarming. The bench test reads ESC response from this log, so no scope is required.
+A spinning robot cannot stay on USB, so the firmware records a short run log to RAM while armed, with time, estimated RPM, sensor reading, and motor output. On disarm, a nonempty log is saved to LittleFS after neutral output is accepted. Each such disarm overwrites the saved run. It is dumped over USB after disarming or a power cycle, preferring RAM entries when present. The bench test reads ESC response from this log, so no scope is required.
 
 ## Failsafes
 
@@ -203,7 +203,7 @@ Run with wheels off the ground on test blocks, on a current-limited supply if av
 3. Turn the transmitter back on with SwA still armed, then raise CH3: motors must stay stopped until the full arming sequence is repeated.
 4. Arm and spin slowly, then unplug iBUS: motors must stop.
 5. Arm and spin slowly, then hold the ESP32 in reset: motors must stop.
-6. Arm and spin slowly, then unplug the sensor: translation and LED must stop, and disarming must stop the motors.
+6. On blocks, with `status` on and disarmed, unplug the sensor and confirm the live sensor state goes stale after 500 ms. Reboot with the sensor unplugged and confirm arming is refused. Reconnect and reboot, then arm and spin slowly before unplugging the sensor: the LED must stop and disarming must still stop the motors. Verify translation cutoff with the host good-samples-to-NAN sequence, since blocks cannot show it.
 7. Power cycle with the ESC connected several times: motors must not twitch at any point.
 
 ## Risks
