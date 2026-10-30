@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <esp_task_wdt.h>
+#include <esp_log.h>
 #include <cmath>
 #include <cstring>
 #include <console.h>
@@ -25,6 +26,25 @@ static uint32_t lastLoop, lastFlip, lastOutput, lastLog, lastStatus, lastControl
 static char line[80];
 static size_t lineLength;
 static bool overflow;
+static constexpr uint32_t kMaxRxGapUs = 20000;
+struct SensorSample { float xG, yG, zG; bool ok; uint32_t seq; };
+static SensorSample sensorSample{};
+static portMUX_TYPE sensorMux = portMUX_INITIALIZER_UNLOCKED;
+static uint32_t lastSensorSeq, outputHz;
+static float lastGoodZ;
+static bool hasGoodZ;
+
+static void sensorTask(void*) {
+    for (;;) {
+        SensorSample sample{};
+        sample.ok = mpuRead(sample.xG, sample.yG, sample.zG);
+        portENTER_CRITICAL(&sensorMux);
+        sample.seq = sensorSample.seq + 1;
+        sensorSample = sample;
+        portEXIT_CRITICAL(&sensorMux);
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+}
 
 static void consolePoll() {
     while (Serial.available()) {
@@ -35,7 +55,7 @@ static void consolePoll() {
         uint32_t oldHz = settings.outputHz;
         ConsoleResult result = overflow ? ConsoleResult::Rejected : handleLine(line, false, settings);
         if (result == ConsoleResult::Defaults) settings = Settings{};
-        if (settings.outputHz != oldHz) escBegin(settings.outputHz);
+        if (settings.outputHz != oldHz) Serial.println("Save and reboot to apply outputHz");
         if (result == ConsoleResult::Save) { storeSave(settings); Serial.println("Saved"); }
         else if (result == ConsoleResult::Rejected) Serial.println("Rejected");
         else if (result == ConsoleResult::ToggleStatus) statusEnabled = !statusEnabled;
@@ -53,16 +73,19 @@ static void consolePoll() {
     }
 }
 void setup() {
-    escBegin(50);
     storeLoad(settings);
-    if (settings.outputHz != 50) escBegin(settings.outputHz);
+    outputHz = settings.outputHz;
+    escBegin(outputHz);
     Serial.begin(115200);
     Serial2.begin(115200, SERIAL_8N1, 16, -1);
     pinMode(27, OUTPUT); digitalWrite(27, LOW);
     startupOk = mpuBegin() && mpuRestCheck(); safety.setSensorStartupOk(startupOk);
+    esp_log_level_set("*", ESP_LOG_NONE);
+    if (xTaskCreatePinnedToCore(sensorTask, "sensor", 4096, nullptr, 1, nullptr, 0) != pdPASS) abort();
     esp_task_wdt_config_t config{250, 0, true};
-    esp_err_t result = esp_task_wdt_init(&config);
-    if (result == ESP_ERR_INVALID_STATE) result = esp_task_wdt_reconfigure(&config);
+    esp_err_t result = esp_task_wdt_status(nullptr);
+    if (result == ESP_ERR_INVALID_STATE) result = esp_task_wdt_init(&config);
+    else if (result == ESP_OK || result == ESP_ERR_NOT_FOUND) result = esp_task_wdt_reconfigure(&config);
     if (result != ESP_OK || esp_task_wdt_add(nullptr) != ESP_OK) abort();
     Serial.println("Melty ESP32 boot");
     lastLoop = micros(); lastControlMs = millis();
@@ -71,6 +94,10 @@ void loop() {
     uint32_t nowUs = micros();
     if (nowUs - lastLoop < 1000) return;
     uint32_t dtUs = nowUs - lastLoop; lastLoop = nowUs;
+    if (dtUs > kMaxRxGapUs) {
+        while (Serial2.available()) Serial2.read();
+        parser = IbusParser{};
+    }
     uint32_t nowMs = millis(), dtMs = nowMs - lastControlMs; lastControlMs = nowMs;
     if (wasArmed) {
         lineLength = 0; overflow = false;
@@ -90,11 +117,15 @@ void loop() {
     if (wasArmed && !armed) { escWrite(kNeutral); digitalWrite(27, LOW); }
     if (!wasArmed && armed) { runLog.clear(); spin = 0; jam = JamGuard{}; }
     wasArmed = armed;
-    float xG, yG, zG;
-    bool readOk = mpuRead(xG, yG, zG);
-    radial = readOk ? (settings.radialAxis == 0 ? xG : yG) * settings.radialSign : NAN;
+    portENTER_CRITICAL(&sensorMux);
+    SensorSample sample = sensorSample;
+    portEXIT_CRITICAL(&sensorMux);
+    bool readOk = sample.seq != lastSensorSeq && sample.ok;
+    lastSensorSeq = sample.seq;
+    if (readOk) { lastGoodZ = sample.zG; hasGoodZ = true; }
+    radial = readOk ? (settings.radialAxis == 0 ? sample.xG : sample.yG) * settings.radialSign : NAN;
     tracker.update(radial, settings.radiusM, stick(frame.ch[3]) * settings.trimRadPerSec, dtUs, nowMs);
-    if (nowMs - lastFlip >= 10) { lastFlip = nowMs; if (readOk) flip.update(zG, settings.zSign, settings.flipFilterMs, 10); }
+    if (nowMs - lastFlip >= 10) { lastFlip = nowMs; if (hasGoodZ) flip.update(lastGoodZ, settings.zSign, settings.flipFilterMs, 10); }
     if (!armed) {
         spin = 0; escWrite(kNeutral); digitalWrite(27, LOW);
         consolePoll();
@@ -111,7 +142,7 @@ void loop() {
     bool sensorOk = tracker.sensorOk(nowMs);
     float heading = effectiveHeading(tracker.headingRad(), flip.flipped());
     MotorPulses pulses = computePulses({power, stick(frame.ch[0]), stick(frame.ch[1]), heading, tracker.rpm(), sensorOk}, {settings.minRpm, settings.strength, settings.phaseRad, settings.reverseA, settings.reverseB});
-    if (nowUs - lastOutput >= 1000000 / settings.outputHz) { lastOutput = nowUs; escWrite(pulses); }
+    if (nowUs - lastOutput >= 1000000 / outputHz) { lastOutput = nowUs; escWrite(pulses); }
     digitalWrite(27, ledOn(heading, settings.ledArcRad, sensorOk) ? HIGH : LOW);
     if (nowMs - lastLog >= 20) { lastLog = nowMs; runLog.add({nowMs, tracker.rpm(), radial, pulses.aUs, pulses.bUs}); }
     esp_task_wdt_reset();
